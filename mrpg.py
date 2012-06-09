@@ -36,11 +36,14 @@ class mrpg:
         mrpg_ref = self
         self.db.mrpg = self
 
+    @defer.inlineCallbacks
     def start(self):
         self.msg("Starting mRPG")
         print "Starting mRPG"
         self.msg("Please standby")
         print "Please standby"
+        online = 0
+        s = yield self.db.executeQuery("UPDATE users SET online = ?",online)
         # Start the reactor task that repeatedly loops through actions
         self.l.start(timespan)
         self.loc.start(movespan)
@@ -368,7 +371,7 @@ class DBPool:
         return self.__dbpool.runQuery(query, [amount])
 
     def register_char(self, user, reg_char_name, reg_password, reg_char_class, hostname):
-        query = 'INSERT INTO `users` (username,char_name,password,char_class,hostname,level,ttl,online,path_endpointx,path_endpointy,cordx,cordy,path_ttl) VALUES (?,?,?,?,?,1,?,1,0,0,10,10,0)'
+        query = 'INSERT INTO `users` (username,char_name,password,char_class,hostname,level,ttl,online,path_endpointx,path_endpointy,cordx,cordy,path_ttl,admin) VALUES (?,?,?,?,?,1,?,1,0,0,10,10,0,0)'
         return self.__dbpool.runQuery(query, (user, reg_char_name, reg_password, reg_char_class, hostname, min_time))
 
     def get_password(self, char_name):
@@ -386,6 +389,14 @@ class DBPool:
     def does_char_name_exist(self, reg_char_exist):
         query = 'SELECT count(*) from users WHERE char_name = ?'
         return self.__dbpool.runQuery(query, [reg_char_exist])
+
+    def get_mrpg_meta(self, name):
+        query = 'SELECT value FROM mrpg_meta WHERE name = ?'
+        return self.__dbpool.runQuery(query, (name))
+
+    def is_user_admin(self, user):
+        query = 'SELECT admin FROM users WHERE char_name = ? AND online = 1'
+        return self.__dbpool.runQuery(query, [user])
 
     def make_user_online(self, username, hostname):
         query = 'UPDATE users SET online = 1, hostname = ? WHERE username = ?'
@@ -485,6 +496,7 @@ class Bot(irc.IRCClient):
                     'newpass': 'To change your password: /msg ' + botname + ' NEWPASS <char name> <oldpass> <new password>',
                     'delete': 'To delete your account: /msg ' + botname + ' DELETE <char name> <password>',
                     'active': 'To see if you are currently logged in: /msg ' + botname + ' active <char name>',
+                    'op': 'To op',
                     'help': 'Available commands: REGISTER, LOGIN, LOGOUT, NEWPASS, DELETE, ACTIVE, HELP'
                 }
                 if (options.has_key(msg_split[0])):
@@ -515,7 +527,8 @@ class Bot(irc.IRCClient):
                                                        (username
                                                        ,item_id
                                                        ,item_type
-                                                       ,level)
+                                                       ,level
+                                                       ,admin)
                                                  SELECT ?
                                                        ,(SELECT id
                                                            FROM items
@@ -523,6 +536,7 @@ class Bot(irc.IRCClient):
                                                        ORDER BY RANDOM() LIMIT 1)
                                                        ,t.id
                                                        ,1
+                                                       ,0
                                                    FROM item_type t'''
                             self.db.executeQuery(query,(user))
                             self.db.shutdown("")
@@ -553,6 +567,7 @@ class Bot(irc.IRCClient):
                                     self.db = DBPool('mrpg.db')
                                     self.db.executeQuery("UPDATE users SET online = 1, hostname = ? WHERE char_name = ?",(hostname,login_char_name))
                                     self.db.shutdown("")
+                                    self.mode(self.factory.channel, True, 'v', user=user)
                                     self.privateMessage(user, "You are now logged in.")
                                 else:
                                     self.privateMessage(user, "Password incorrect.")
@@ -664,8 +679,35 @@ class Bot(irc.IRCClient):
                         else:
                             self.privateMessage(user, active_char_name + " is online.")
 
+
+                def doop():
+                    toop = msg_split[1]
+                    #self.mode(self.factory.channel, True, 'o', user=toop)
+
+                def dodeop():
+                    toop = msg_split[1]
+                    #self.mode(self.factory.channel, False, 'o', user=toop)
+
+                @defer.inlineCallbacks
+                def doinitialsetup():
+                    toop = msg_split[1]
+
+#                    self.db = DBPool('mrpg.db')
+#                    value = "SUPERADMIN"
+#                    a = yield self.db.executeQuery("SELECT value FROM mrpg_meta WHERE name = ?",value)
+#
+#                    if a:
+#                        self.privateMessage(user, 'Initial setup has already been run. Your attempt to rerun setup has been logged.')
+#                    else:
+#                        yield self.db.executeQuery("UPDATE users SET admin = 1 WHERE char_name = ?", toop)
+#                        yield self.db.executeQuery("INSERT INTO mrpg_meta VALUES('SUPERADMIN',?)" ,toop)
+#
+#                    self.db.shutdown("")
+
+
                 def dohelp():
                     self.privateMessage(user, 'Available commands: REGISTER, LOGIN, LOGOUT, NEWPASS, DELETE, ACTIVE, HELP')
+                    
                 options = {
                     'register': doregister,
                     'login': dologin,
@@ -673,6 +715,9 @@ class Bot(irc.IRCClient):
                     'newpass': donewpass,
                     'delete': dodelete,
                     'active': doactive,
+                    'op': doop,
+                    'deop': dodeop,
+                    'initialsetup': doinitialsetup,
                     'help': dohelp
                 }
                 if (options.has_key(msg_split[0])):
