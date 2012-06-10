@@ -794,20 +794,20 @@ class Bot(irc.IRCClient):
 
                 @defer.inlineCallbacks
                 def doban():
-#                    if lenow >= 2:
-#                        self.db = DBPool('mrpg.db')
-#                        x = yield self.db.is_user_admin(user)
-#                        if not x:
-#                            self.privateMessage(user, "You do not have access to ban.")
-#                        else:
-#                            tokick = msg_split[1]
-#                            if lenow >= 3:
-#                                reason = msg_split[2::1]
-#                                reason = ' '.join(reason)
-#                            else:
-#                                reason = ""
-#                            self.mode(self.factory.channel, True, 'b', mask='*@applesauce')
-#                        self.db.shutdown("")
+                    if lenow >= 2:
+                        self.db = DBPool('mrpg.db')
+                        x = yield self.db.is_user_admin(user)
+                        if not x:
+                            self.privateMessage(user, "You do not have access to ban.")
+                        else:
+                            tokick = msg_split[1]
+                            if lenow >= 3:
+                                reason = msg_split[2::1]
+                                reason = ' '.join(reason)
+                            else:
+                                reason = ""
+                            #self.mode(self.factory.channel, True, 'b', mask='*@applesauce')
+                        self.db.shutdown("")
 
 
 
