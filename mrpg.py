@@ -53,6 +53,9 @@ class mrpg:
         self.msg("Initialization complete")
         print "Initialization complete"
 
+        print self.db.is_user_admin("richard")
+        print self.db.is_user_admin("foo")
+
     def stop(self):
         self.msg("I think my loop needs to stop")
         self.l.stop()
@@ -318,6 +321,22 @@ class DBPool:
             mrpg_ref.msg(message)
             # print message
 
+    def check_if_user_admin(self, user):
+        query = 'SELECT admin FROM users WHERE char_name = ? AND online = 1 LIMIT 1'
+        yield self.__dbpool.runQuery(query, [user])
+
+    @defer.inlineCallbacks
+    def is_user_admin(self, user):
+        query = 'SELECT admin FROM users WHERE char_name = ? AND online = 1 LIMIT 1'
+        a = self.check_if_user_admin(user)
+
+        if a:
+            print a
+            if a[0][0] == 1:
+                return 1
+
+        return 0
+
     def levelUp(self):
         query = "SELECT username, char_name, level, ttl FROM users WHERE ttl < 0 AND online = 1"
         s = self.__dbpool.runQuery(query).addCallback(self.showLevelUp)
@@ -393,10 +412,6 @@ class DBPool:
     def get_mrpg_meta(self, name):
         query = 'SELECT value FROM mrpg_meta WHERE name = ?'
         return self.__dbpool.runQuery(query, (name))
-
-    def is_user_admin(self, user):
-        query = 'SELECT admin FROM users WHERE char_name = ? AND online = 1'
-        return self.__dbpool.runQuery(query, [user])
 
     def make_user_online(self, username, hostname):
         query = 'UPDATE users SET online = 1, hostname = ? WHERE username = ?'
@@ -692,22 +707,22 @@ class Bot(irc.IRCClient):
                 def doinitialsetup():
                     toop = msg_split[1]
 
-#                    self.db = DBPool('mrpg.db')
-#                    value = "SUPERADMIN"
-#                    a = yield self.db.executeQuery("SELECT value FROM mrpg_meta WHERE name = ?",value)
-#
-#                    if a:
-#                        self.privateMessage(user, 'Initial setup has already been run. Your attempt to rerun setup has been logged.')
-#                    else:
-#                        yield self.db.executeQuery("UPDATE users SET admin = 1 WHERE char_name = ?", toop)
-#                        yield self.db.executeQuery("INSERT INTO mrpg_meta VALUES('SUPERADMIN',?)" ,toop)
-#
-#                    self.db.shutdown("")
+                    self.db = DBPool('mrpg.db')
+                    value = "SUPERADMIN"
+                    a = yield self.db.executeQuery("SELECT value FROM mrpg_meta WHERE name = ?",value)
+
+                    if a:
+                        self.privateMessage(user, 'Initial setup has already been run. Your attempt to rerun setup has been logged.')
+                    else:
+                        yield self.db.executeQuery("UPDATE users SET admin = 1 WHERE char_name = ?", toop)
+                        yield self.db.executeQuery("INSERT INTO mrpg_meta VALUES('SUPERADMIN',?)" ,toop)
+
+                    self.db.shutdown("")
 
 
                 def dohelp():
                     self.privateMessage(user, 'Available commands: REGISTER, LOGIN, LOGOUT, NEWPASS, DELETE, ACTIVE, HELP')
-                    
+
                 options = {
                     'register': doregister,
                     'login': dologin,
