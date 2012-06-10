@@ -53,9 +53,6 @@ class mrpg:
         self.msg("Initialization complete")
         print "Initialization complete"
 
-        print self.db.is_user_admin("richard")
-        print self.db.is_user_admin("foo")
-
     def stop(self):
         self.msg("I think my loop needs to stop")
         self.l.stop()
@@ -321,21 +318,18 @@ class DBPool:
             mrpg_ref.msg(message)
             # print message
 
-    def check_if_user_admin(self, user):
-        query = 'SELECT admin FROM users WHERE char_name = ? AND online = 1 LIMIT 1'
-        yield self.__dbpool.runQuery(query, [user])
-
     @defer.inlineCallbacks
     def is_user_admin(self, user):
-        query = 'SELECT admin FROM users WHERE char_name = ? AND online = 1 LIMIT 1'
-        a = self.check_if_user_admin(user)
-
+        query = 'SELECT admin FROM users WHERE username = ? AND online = 1 LIMIT 1'
+        a = yield self.executeQuery(query, (user))
         if a:
-            print a
             if a[0][0] == 1:
-                return 1
+                defer.returnValue(True)
+            else:
+                defer.returnValue(False)
+        else:
+            defer.returnValue(False)
 
-        return 0
 
     def levelUp(self):
         query = "SELECT username, char_name, level, ttl FROM users WHERE ttl < 0 AND online = 1"
@@ -461,6 +455,46 @@ class DBPool:
 
 class Bot(irc.IRCClient):
 
+    def __init__(self, *args, **kwargs):
+        self._namescallback = {}
+
+    # Sample method to show names
+    # Sample call: self.names("#mRPG").addCallback(self.got_names)
+    def got_names(self, nicklist):
+        log.msg(nicklist)
+
+    def names(self, channel):
+        channel = channel.lower()
+        d = defer.Deferred()
+        if channel not in self._namescallback:
+            self._namescallback[channel] = ([], [])
+
+        self._namescallback[channel][0].append(d)
+        self.sendLine("NAMES %s" % channel)
+        return d
+
+    def irc_RPL_NAMREPLY(self, prefix, params):
+        channel = params[2].lower()
+        nicklist = params[3].split(' ')
+
+        if channel not in self._namescallback:
+            return
+
+        n = self._namescallback[channel][1]
+        n += nicklist
+
+    def irc_RPL_ENDOFNAMES(self, prefix, params):
+        channel = params[1].lower()
+        if channel not in self._namescallback:
+            return
+
+        callbacks, namelist = self._namescallback[channel]
+
+        for cb in callbacks:
+            cb.callback(namelist)
+
+        del self._namescallback[channel]
+
     def privateMessage(self, user, msg):
         if self.factory.use_private_message == 1:
             self.msg(user, msg)
@@ -493,6 +527,17 @@ class Bot(irc.IRCClient):
         # not sure if this will cause problems or not.
         #def joined(self, channel):
         #self.mrpg.start()
+
+    @defer.inlineCallbacks
+    def set_user_mode(self, user, target, set, mode):
+        user = str(user)
+        self.db = DBPool('mrpg.db')
+        x = yield self.db.is_user_admin(user)
+        if not x:
+            self.privateMessage(user, "You do not have access.")
+        else:
+            self.mode(self.factory.channel, set, mode, user=target)
+        self.db.shutdown("")
 
     def privmsg(self, user, channel, msg):
         hostname = user.split('~',1)[1]
@@ -694,30 +739,103 @@ class Bot(irc.IRCClient):
                         else:
                             self.privateMessage(user, active_char_name + " is online.")
 
-
                 def doop():
-                    toop = msg_split[1]
-                    #self.mode(self.factory.channel, True, 'o', user=toop)
+                    if lenow >= 2:
+                        tovoice = msg_split[1]
+                        self.set_user_mode(user, tovoice, True, 'o')
 
                 def dodeop():
-                    toop = msg_split[1]
-                    #self.mode(self.factory.channel, False, 'o', user=toop)
+                    if lenow >= 2:
+                        tovoice = msg_split[1]
+                        self.set_user_mode(user, tovoice, False, 'o')
+
+                def dovoice():
+                    if lenow >= 2:
+                        tovoice = msg_split[1]
+                        self.set_user_mode(user, tovoice, True, 'v')
+
+                def dodevoice():
+                    if lenow >= 2:
+                        tovoice = msg_split[1]
+                        self.set_user_mode(user, tovoice, False, 'v')
+
+                @defer.inlineCallbacks
+                def dokick():
+                    if lenow >= 2:
+                        self.db = DBPool('mrpg.db')
+                        x = yield self.db.is_user_admin(user)
+                        if not x:
+                            self.privateMessage(user, "You do not have access to kick.")
+                        else:
+                            tokick = msg_split[1]
+                            if lenow >= 3:
+                                reason = msg_split[2::1]
+                                reason = ' '.join(reason)
+                            else:
+                                reason = ""
+                            self.kick(self.factory.channel, tokick, reason)
+                        self.db.shutdown("")
+
+                @defer.inlineCallbacks
+                def dosay():
+                    if lenow >= 2:
+                        self.db = DBPool('mrpg.db')
+                        x = yield self.db.is_user_admin(user)
+                        if not x:
+                            self.privateMessage(user, "You do not have access to say.")
+                        else:
+                            if lenow >= 3:
+                                reason = msg_split[1::1]
+                                reason = ' '.join(reason)
+                            else:
+                                reason = ""
+                            self.say(self.factory.channel, reason)
+                        self.db.shutdown("")
+
+                @defer.inlineCallbacks
+                def doban():
+#                    if lenow >= 2:
+#                        self.db = DBPool('mrpg.db')
+#                        x = yield self.db.is_user_admin(user)
+#                        if not x:
+#                            self.privateMessage(user, "You do not have access to ban.")
+#                        else:
+#                            tokick = msg_split[1]
+#                            if lenow >= 3:
+#                                reason = msg_split[2::1]
+#                                reason = ' '.join(reason)
+#                            else:
+#                                reason = ""
+#                            self.mode(self.factory.channel, True, 'b', mask='*@applesauce')
+#                        self.db.shutdown("")
+
+
 
                 @defer.inlineCallbacks
                 def doinitialsetup():
-                    toop = msg_split[1]
+                    if config.has_option('BOT','setup_password'):
+                        if (lenow >= 3):
+                            toop = msg_split[1]
+                            password = msg_split[2]
 
-                    self.db = DBPool('mrpg.db')
-                    value = "SUPERADMIN"
-                    a = yield self.db.executeQuery("SELECT value FROM mrpg_meta WHERE name = ?",value)
+                            real_password = config.get('BOT', 'setup_password')
 
-                    if a:
-                        self.privateMessage(user, 'Initial setup has already been run. Your attempt to rerun setup has been logged.')
-                    else:
-                        yield self.db.executeQuery("UPDATE users SET admin = 1 WHERE char_name = ?", toop)
-                        yield self.db.executeQuery("INSERT INTO mrpg_meta VALUES('SUPERADMIN',?)" ,toop)
+                            if password == real_password:
+                                self.db = DBPool('mrpg.db')
+                                value = "SUPERADMIN"
+                                a = yield self.db.executeQuery("SELECT value FROM mrpg_meta WHERE name = ?",value)
 
-                    self.db.shutdown("")
+                                if a:
+                                    self.privateMessage(user, 'Initial setup has already been run. Your attempt to rerun setup has been logged.')
+                                else:
+                                    yield self.db.executeQuery("UPDATE users SET admin = 1 WHERE char_name = ?", toop)
+                                    yield self.db.executeQuery("INSERT INTO mrpg_meta VALUES('SUPERADMIN',?)" ,toop)
+
+                                self.db.shutdown("")
+                            else:
+                                self.privateMessage(user, 'An incorrect password has been supplied. Your attempt to run setup has been logged.')
+                        else:
+                            self.privateMessage(user, "Not enough information was supplied.")
 
 
                 def dohelp():
@@ -732,6 +850,11 @@ class Bot(irc.IRCClient):
                     'active': doactive,
                     'op': doop,
                     'deop': dodeop,
+                    'voice': dovoice,
+                    'devoice': dodevoice,
+                    'kick': dokick,
+                    'ban': doban,
+                    'say': dosay,
                     'initialsetup': doinitialsetup,
                     'help': dohelp
                 }
