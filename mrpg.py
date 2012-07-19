@@ -52,7 +52,8 @@ class mrpg:
         is_started = 1
         self.msg("Initialization complete")
         print "Initialization complete"
-
+        self.auto_login()
+        
     def stop(self):
         self.msg("I think my loop needs to stop")
         self.l.stop()
@@ -71,6 +72,60 @@ class mrpg:
         else:
             self.notice(user, msg)
 
+    @defer.inlineCallbacks
+    def auto_login(self):
+        # set variables we will need
+        auto_logged_in_users = []
+        # First log everyone out
+        self.db = DBPool('mrpg.db')
+        s = yield self.db.executeQuery("UPDATE users SET online = 0","NONE")
+        self.db.shutdown("")
+        
+        # Perform a who and get everyones username and hostname in the channel
+        temp = yield self.parent.who(self.channel)
+        # Parse all the information and decide the users fate 
+        if temp:
+            count = 0
+            while (count < len(temp)):
+                # ex. output of who: ['mRPG', '74.xxx.xxx.xxx', 'ChanServ', 'blah.net', 'NeWtoz', 'xxxx:xxxx::xxxx']
+                username = temp[count]
+                hostname = temp[count + 1]
+                
+                # get the hostname stored in the database and compare
+                self.db = DBPool('mrpg.db')
+                newtemp = yield self.db.get_prefix(username)
+                # This is if there is a user that isn't in the database, such as a random idler in the channel
+                if not newtemp:
+                    print "User: " + username + " with Host: " + hostname + " doesn't appear registered with this game."
+                # if both username and hostname match, log them in and store the usernames so we can announce them all at once
+                elif(newtemp[0][0] == hostname):
+                    self.db.make_user_online(username, hostname)
+                    auto_logged_in_users.append(username)
+                    self.parent.mode(self.channel, True, 'v', user=username)
+                    print "User: " + username + " with Host: " + hostname + " is being auto logged in."
+                # if the hostname doesn't match, then don't log in.
+                else:
+                    print "User: " + username + " with Host: " + hostname + " didn't qualify for auto login."
+                self.db.shutdown("")
+                # add 2 to the count since we are pulling two records (username and hostname) from list
+                count = count + 2
+            # We want to announce all the users at once to avoid spam in the channel
+            if auto_logged_in_users:
+                # declare our variables
+                count = 0
+                usernames = ''
+                # turn the list into a long string of the users
+                while (count < len(auto_logged_in_users)):
+                    usernames = usernames + " " + auto_logged_in_users[count]
+                    count = count + 1
+                # for good grammar, we seperate user/users
+                if (len(auto_logged_in_users) == 1):
+                    print "1 user automatically logged in:" + usernames
+                    self.msg("1 user automatically logged in:" + usernames)
+                else:
+                    print str(len(auto_logged_in_users)) + " users automatically logged in:" + usernames
+                    self.msg(str(len(auto_logged_in_users)) + " users automatically logged in:" + usernames)
+                    
     @defer.inlineCallbacks
     def performPenalty(self, user, reason):
         self.db = DBPool('mrpg.db')
@@ -402,6 +457,10 @@ class DBPool:
     def does_char_name_exist(self, reg_char_exist):
         query = 'SELECT count(*) from users WHERE char_name = ?'
         return self.__dbpool.runQuery(query, [reg_char_exist])
+        
+    def does_user_name_exist(self, reg_user_exist):
+        query = 'SELECT count(*) from users WHERE username = ?'
+        return self.__dbpool.runQuery(query, [reg_user_exist])
 
     def get_mrpg_meta(self, name):
         query = 'SELECT value FROM mrpg_meta WHERE name = ?'
@@ -457,12 +516,41 @@ class Bot(irc.IRCClient):
 
     def __init__(self, *args, **kwargs):
         self._namescallback = {}
+        self._whocallback = {}
 
     # Sample method to show names
     # Sample call: self.names("#mRPG").addCallback(self.got_names)
     def got_names(self, nicklist):
         log.msg(nicklist)
 
+    def who(self, channel):
+        channel = channel.lower()
+        d = defer.Deferred()
+        if channel not in self._whocallback:
+            self._whocallback[channel] = ([], [])
+        self._whocallback[channel][0].append(d)
+        self.sendLine("WHO %s" % channel)
+        return d
+
+    def irc_RPL_WHOREPLY(self, prefix, params):
+        channel = params[1].lower()
+        nicklist = params[5]
+        ip = params[2].replace("~","") + "@" + params[3]
+        if channel not in self._whocallback:
+            return
+        n = self._whocallback[channel][1]
+        n.append(nicklist)
+        n.append(ip)
+
+    def irc_RPL_ENDOFWHO(self, prefix, params):
+        channel = params[1].lower()
+        if channel not in self._whocallback:
+            return
+        callbacks, wholist = self._whocallback[channel]
+        for cb in callbacks:
+            cb.callback(wholist)
+        del self._whocallback[channel]
+        
     def names(self, channel):
         channel = channel.lower()
         d = defer.Deferred()
@@ -574,9 +662,12 @@ class Bot(irc.IRCClient):
 
                         self.db = DBPool('mrpg.db')
                         char_exists = yield self.db.does_char_name_exist(reg_char_name)
+                        user_exists = yield self.db.does_user_name_exist(user)
                         self.db.shutdown("")
                         if(char_exists[0][0] == 1):
                             self.privateMessage(user, "There is already a character with that name.")
+                        elif(user_exists[0][0] == 1):
+                            self.privateMessage(user, "You already have a character registered.")
                         else:
                             hash = sc.encrypt(reg_password)
                             hash
@@ -587,8 +678,7 @@ class Bot(irc.IRCClient):
                                                        (username
                                                        ,item_id
                                                        ,item_type
-                                                       ,level
-                                                       ,admin)
+                                                       ,level)
                                                  SELECT ?
                                                        ,(SELECT id
                                                            FROM items
@@ -596,7 +686,6 @@ class Bot(irc.IRCClient):
                                                        ORDER BY RANDOM() LIMIT 1)
                                                        ,t.id
                                                        ,1
-                                                       ,0
                                                    FROM item_type t'''
                             self.db.executeQuery(query,(user))
                             self.db.shutdown("")
